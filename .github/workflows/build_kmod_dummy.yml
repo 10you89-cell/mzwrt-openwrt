@@ -1,64 +1,142 @@
-name: Build kmod-dummy Only for MzWrt RAX3000M
+name: Build kmod-dummy Only | MzWrt RAX3000M
 on:
-  workflow_dispatch: # 仅支持手动点按钮运行，关闭定时，防止自动跑全量编译
+  workflow_dispatch: # 仅手动触发，关闭定时
 
-env:
-  TARGET: mediatek
-  SUBTARGET: filogic
-  PROFILE: cmcc_rax3000m
-  IMAGE_NAME: MzWrt-mediatek-filogic-cmcc_rax3000m
+concurrency:
+  group: build-kmoddummy-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
-  build:
+  Build_kmod_dummy:
     runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      TZ: Asia/Shanghai
+      OPENWRT_DIR: openwrt
+      WORK_ROOT: /mnt/openwrt
+
     steps:
-      - name: Checkout repo
+      - name: Checkout this repository
         uses: actions/checkout@v4
+        with:
+          path: build-repo
+
+      - name: Checkout config repository (mzwrt/config)
+        uses: actions/checkout@v4
+        with:
+          repository: mzwrt/config
+          ref: main
+          path: config-repo
+
+      - name: Free disk space
+        run: |
+          set -euo pipefail
+          sudo swapoff -a || true
+          sudo apt-get -y purge \
+            azure-cli\* docker\* ghc\* zulu\* hhvm\* llvm\* firefox\* google\* \
+            dotnet\* aspnetcore\* powershell\* openjdk\* adoptopenjdk\* \
+            mysql\* php\* mongodb\* moby\* snap\* || true
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /opt/ghc \
+            /opt/hostedtoolcache/CodeQL \
+            /usr/local/.ghcup || true
+          sudo apt-get autoremove -y || true
+          sudo apt-get clean || true
+          df -h
+
+      - name: Prepare work directory
+        run: |
+          set -euo pipefail
+          sudo mkdir -p "${WORK_ROOT}"
+          sudo chown -R "${USER}:${USER}" "${WORK_ROOT}"
+          cp -a config-repo/mzwrt-openwrt "${WORK_ROOT}/mzwrt-openwrt"
+          df -h "${WORK_ROOT}"
 
       - name: Install build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential libncurses-dev gawk flex bison openssl libssl-dev dkms libelf-dev libudev-dev libpci-dev libiberty-dev autoconf git wget curl rsync unzip zstd
+          set -euo pipefail
+          sudo timedatectl set-timezone "${TZ}"
+          sudo apt-get update -yqq
+          sudo apt-get install -yqq --no-install-recommends \
+            ack antlr3 asciidoc autoconf automake autopoint \
+            binutils bison build-essential bzip2 ccache cmake cpio curl \
+            device-tree-compiler ecj fastjar flex gawk gettext \
+            gcc-multilib g++-multilib git gnutls-dev gperf haveged \
+            help2man intltool jq libelf-dev libgmp3-dev libltdl-dev \
+            libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
+            libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp \
+            nano ninja-build p7zip p7zip-full patch pkgconf python3 \
+            python3-pip python3-pyelftools python3-setuptools qemu-utils \
+            rsync scons squashfs-tools subversion swig texinfo uglifyjs \
+            unzip wget zlib1g-dev
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
 
-      # ========== 下面这一段【完全沿用原rax3000m-openwrt.yml的拉源码、打补丁、下载.config逻辑，保证vermagic一致】 ==========
-      - name: Clone iStoreOS source & apply MzWrt patch
+      - name: Clone OpenWrt source & run diy1.sh
+        working-directory: ${{ env.WORK_ROOT }}
         run: |
-          git clone --depth=1 https://github.com/istoreos/istoreos.git openwrt
-          cd openwrt
-          # 同步原版仓库的.config
-          wget -O .config https://raw.githubusercontent.com/10you89-cell/mzwrt-openwrt/main/config/rax3000m.config
-          # 应用MzWrt补丁脚本（和原版固件保持一致）
-          bash ../patch.sh
-      # =====================================================================================================
+          set -euo pipefail
+          source mzwrt-openwrt/version.conf
+          export OPENWRT_VER SDK_VER MZWRT_PACKAGE_REF
+          echo "Building OpenWrt v${OPENWRT_VER}"
+          git clone -b "v${OPENWRT_VER}" --single-branch --depth=1 \
+            https://github.com/openwrt/openwrt.git "${OPENWRT_DIR}"
+          cd "${OPENWRT_DIR}"
+          cp -f ../mzwrt-openwrt/diy1.sh ./
+          chmod +x ./diy1.sh
+          ./diy1.sh
 
-      - name: Feeds update & install
+      - name: Update & Install feeds + run diy2.sh
+        working-directory: ${{ env.WORK_ROOT }}/openwrt
         run: |
-          cd openwrt
+          set -euo pipefail
           ./scripts/feeds update -a
           ./scripts/feeds install -a
+          cp -f ../mzwrt-openwrt/diy2.sh ./
+          chmod +x ./diy2.sh
+          ./diy2.sh
 
-      - name: Config prepare
+      - name: Load rax3000m.config
+        working-directory: ${{ env.WORK_ROOT }}/openwrt
         run: |
-          cd openwrt
-          make defconfig
-          # 强制选中 kmod-dummy
+          set -euo pipefail
+          cp -f ../mzwrt-openwrt/rax3000m.config .config
+          # 开启kmod-dummy编译
           echo "CONFIG_PACKAGE_kmod-dummy=y" >> .config
           make olddefconfig
 
-      - name: Compile only kmod-dummy
+      - name: Download source files
+        working-directory: ${{ env.WORK_ROOT }}/openwrt
         run: |
-          cd openwrt
-          # 单独编译内核模块，不编译整机固件
-          make package/kmod-dummy/compile -j$(nproc)
+          set -euo pipefail
+          df -h
+          make download -j"$(nproc)"
+          find dl -type f -size -1024c -print -delete || true
 
-      - name: Collect ipk file
+      - name: Compile only kmod-dummy
+        working-directory: ${{ env.WORK_ROOT }}/openwrt
+        run: |
+          set -euo pipefail
+          df -h
+          make package/kmod-dummy/compile -j"$(nproc)" || make package/kmod-dummy/compile -j1 V=s
+          df -h
+          ls -lah bin/packages/aarch64_cortex-a53/
+
+      - name: Collect ipk
         run: |
           mkdir -p ./ipk_out
-          find openwrt/bin/packages/aarch64_cortex-a53/ -name "kmod-dummy*.ipk" | xargs cp -t ./ipk_out/
+          find ${{ env.WORK_ROOT }}/openwrt/bin/packages/aarch64_cortex-a53/ -name "kmod-dummy*.ipk" | xargs cp -t ./ipk_out/
           ls -lh ./ipk_out
 
-      - name: Upload ipk to artifact
+      - name: Upload ipk artifact
         uses: actions/upload-artifact@v4
         with:
           name: kmod-dummy-rax3000m
           path: ./ipk_out/*.ipk
+          retention-days: 30
