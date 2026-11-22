@@ -1,0 +1,63 @@
+name: Build kmod-dummy only for MzWrt RAX3000M
+on:
+  workflow_dispatch: # 仅手动触发，无定时
+
+env:
+  TARGET: mediatek
+  SUBTARGET: mt7981
+  PROFILE: rax3000m
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libncurses-dev gawk flex bison openssl libssl-dev dkms libelf-dev libudev-dev libpci-dev libiberty-dev autoconf git wget curl rsync unzip
+
+      - name: Pull MzWrt baseline source (和原版固件保持一致)
+        run: |
+          # ========== 这里是核心 ==========
+          # 你后续打开原仓库 Build_mt7981_rax3000m.yml，把里面：
+          # git clone istoreos、下载.config、打补丁的命令，完整替换到下面这一块
+          # 保证源码分支、.config、补丁 和 你当前路由器固件完全一致，vermagic才能对上
+          git clone --depth=1 https://github.com/istoreos/istoreos.git openwrt
+          cd openwrt
+          # 【示例占位，务必替换成原版脚本里真实的 .config 下载地址】
+          # wget -O .config https://xxxx/xxx/rax3000m.config
+
+      - name: Feeds update & install
+        run: |
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Generate config
+        run: |
+          cd openwrt
+          make defconfig
+          # 确保kmod-dummy被选中编译
+          echo "CONFIG_PACKAGE_kmod-dummy=y" >> .config
+          make olddefconfig
+
+      - name: Compile kmod-dummy
+        run: |
+          cd openwrt
+          # 单独编译内核模块，不编译固件
+          make package/kmod-dummy/compile -j$(nproc)
+
+      - name: Collect ipk
+        run: |
+          mkdir -p ./out
+          find openwrt/bin/packages/aarch64_cortex-a53/ -name "kmod-dummy*.ipk" | xargs cp -t ./out/
+          ls ./out
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kmod-dummy-ipk
+          path: ./out/*.ipk
