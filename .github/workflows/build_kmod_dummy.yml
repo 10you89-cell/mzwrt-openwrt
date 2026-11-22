@@ -1,6 +1,6 @@
 name: Build kmod-dummy Only | MzWrt RAX3000M
 on:
-  workflow_dispatch: # 仅手动触发，关闭定时
+  workflow_dispatch: # 仅手动触发，无定时
 
 concurrency:
   group: build-kmoddummy-${{ github.ref }}
@@ -29,6 +29,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: mzwrt/config
+          token: ${{ secrets.GH_TOKEN }}
           ref: main
           path: config-repo
 
@@ -102,12 +103,11 @@ jobs:
           chmod +x ./diy2.sh
           ./diy2.sh
 
-      - name: Load rax3000m.config
+      - name: Load rax3000m.config and enable kmod-dummy
         working-directory: ${{ env.WORK_ROOT }}/openwrt
         run: |
           set -euo pipefail
           cp -f ../mzwrt-openwrt/rax3000m.config .config
-          # 开启kmod-dummy编译
           echo "CONFIG_PACKAGE_kmod-dummy=y" >> .config
           make olddefconfig
 
@@ -131,7 +131,7 @@ jobs:
       - name: Collect ipk
         run: |
           mkdir -p ./ipk_out
-          find ${{ env.WORK_ROOT }}/openwrt/bin/packages/aarch64_cortex-a53/ -name "kmod-dummy*.ipk" | xargs cp -t ./ipk_out/
+          find ${{ env.WORK_ROOT }}/openwrt/bin/packages/aarch64_cortex-a53/ -name "kmod-dummy*.ipk" -print0 | xargs -0 cp -t ./ipk_out/
           ls -lh ./ipk_out
 
       - name: Upload ipk artifact
