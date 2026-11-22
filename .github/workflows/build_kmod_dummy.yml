@@ -1,6 +1,6 @@
 name: Build kmod-dummy Only | MzWrt RAX3000M
 on:
-  workflow_dispatch: # 仅手动触发，无定时
+  workflow_dispatch:
 
 concurrency:
   group: build-kmoddummy-${{ github.ref }}
@@ -21,12 +21,12 @@ jobs:
 
     steps:
       - name: Checkout this repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           path: build-repo
 
       - name: Checkout config repository (mzwrt/config)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: mzwrt/config
           token: ${{ secrets.GH_TOKEN }}
@@ -135,7 +135,7 @@ jobs:
           ls -lh ./ipk_out
 
       - name: Upload ipk artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: kmod-dummy-rax3000m
           path: ./ipk_out/*.ipk
